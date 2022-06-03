@@ -17,7 +17,7 @@ int main()
 
 
 	x.init((UINT_PTR)GetProcAddress(GetModuleHandle(L"user32.dll"), "MessageBoxA"));
-	x.absolutejmp_hook((UINT_PTR)Hooked_MessageBoxA);
+	x.ret_hook((UINT_PTR)Hooked_MessageBoxA);
 
 	MessageBoxA(0, "YS - Second Message", "YS - Second Message", 0);
 

@@ -169,6 +169,72 @@ public:
 		}
 	}
 
+	void ret_hook(ULONG_PTR pMalicousFunction)
+	{
+		if (this->sHookData.class_initilized && !this->sHookData.hook_exists)
+		{
+#ifdef _WIN64
+			DWORD dwOldProtect;
+			VirtualProtect((LPVOID)this->pFunctionToHook, 20, PAGE_EXECUTE_READWRITE, &dwOldProtect);
+			InterlockedExchange8((char*)this->pFunctionToHook, '\xC3');
+
+			// ret.
+			*(char*)(this->pFunctionToHook + 19) = '\xC3';
+
+			// mov DWORD PTR[rsp + 0x4], <HighPart pMalicousFunction>
+			*(char*)(this->pFunctionToHook + 11) = '\xc7';
+			*(char*)(this->pFunctionToHook + 12) = '\x44';
+			*(char*)(this->pFunctionToHook + 13) = '\x24';
+			*(char*)(this->pFunctionToHook + 14) = '\x04';
+			*(DWORD*)(this->pFunctionToHook + 15) = (DWORD)(pMalicousFunction >> 32);
+
+			// DWORD PTR[rsp], <LowPart pMalicousFunction>  c7 04 24 ef cd ab 89
+			*(char*)(this->pFunctionToHook + 4) = '\xc7';
+			*(char*)(this->pFunctionToHook + 5) = '\x04';
+			*(char*)(this->pFunctionToHook + 6) = '\x24';
+			*(DWORD*)(this->pFunctionToHook + 7) = (DWORD)(pMalicousFunction & 0xFFFFFFFF);
+
+			// sub rsp, 0x8
+			*(char*)(this->pFunctionToHook + 1) = '\x83';
+			*(char*)(this->pFunctionToHook + 2) = '\xec';
+			*(char*)(this->pFunctionToHook + 3) = '\x08';
+			InterlockedExchange8((char*)this->pFunctionToHook, '\x48');
+
+			// We now changed the function to run
+			//  sub rsp, 0x8
+			//  DWORD PTR[rsp], <LowPart pMalicousFunction>
+			//  mov DWORD PTR[rsp + 0x4], <HighPart pMalicousFunction>
+			//  ret
+
+			VirtualProtect((LPVOID)this->pFunctionToHook, 20, dwOldProtect, &dwOldProtect);
+			this->sHookData.hook_exists = true;
+			this->sHookData.bytes_overwritten = 20;
+
+
+#elif _WIN32
+			DWORD dwOldProtect;
+			VirtualProtect((LPVOID)this->pFunctionToHook, 6, PAGE_EXECUTE_READWRITE, &dwOldProtect);
+			InterlockedExchange8((char*)this->pFunctionToHook, '\xC3');
+
+			// ret.
+			*(char*)(this->pFunctionToHook + 5) = '\xC3';
+
+			// push pMalicousFunction
+			*(ULONG_PTR*)(this->pFunctionToHook + 1) = pMalicousFunction;
+			InterlockedExchange8((char*)this->pFunctionToHook, '\x68');
+
+			// We now changed the function to run
+			// push pMalicousFunction
+			// ret
+
+			VirtualProtect((LPVOID)this->pFunctionToHook, 6, dwOldProtect, &dwOldProtect);
+
+			this->sHookData.hook_exists = true;
+			this->sHookData.bytes_overwritten = 6;
+#endif
+		}
+	}
+
 	/* Remove placed hook. */
 	void remove_hook()
 	{
