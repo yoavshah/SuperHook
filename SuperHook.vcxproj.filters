@@ -18,9 +18,12 @@
     <ClCompile Include="example.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="SuperHook.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="SuperHook.hpp">
+    <ClInclude Include="SuperHook.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

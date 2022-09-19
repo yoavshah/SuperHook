@@ -1,32 +1,54 @@
 #include <Windows.h>
-#include "SuperHook.hpp"
+#include "SuperHook.h"
 
+SuperHook* g_pSuperHook;
 
-super_hook<decltype(&MessageBoxA)> x;
-
-int WINAPI Hooked_MessageBoxA(HWND h, LPCSTR a, LPCSTR b, UINT t)
+DWORD __stdcall Hooked_GetCurrentProcessId()
 {
-	x.get_function()(0, "HACKED", "HACKED", 0);
-	return 0;
+    // Do something
+
+    // Call real function with parameters
+    DWORD dwProcessId = reinterpret_cast<decltype(GetCurrentProcessId)*>(g_pSuperHook->ClonedFunction("GetCurrentProcessId"))();
+
+    // Do something
+    return 0;
 }
 
+DWORD __stdcall Hooked_MessageBoxA(HWND hWnd, LPCSTR lpText, LPCSTR lpCaption, UINT uType)
+{
+    // Do something
+
+    // Call real function with parameters
+    DWORD dwResult = reinterpret_cast<decltype(MessageBoxA)*>(g_pSuperHook->ClonedFunction("MessageBoxA"))(hWnd, "MessageBox Hooked!", "MessageBox Hooked!", uType);
+
+    // Do something
+    return dwResult;
+}
+
+void initlize_hooking()
+{
+    g_pSuperHook = new SuperHook();
+
+    g_pSuperHook->HookFunction("kernel32.dll", "GetCurrentProcessId", reinterpret_cast<UINT_PTR>(Hooked_GetCurrentProcessId), SUPERHOOKTYPE_ABSOLUTEJMP);
+
+    g_pSuperHook->HookFunction("user32.dll", "MessageBoxA", reinterpret_cast<UINT_PTR>(Hooked_MessageBoxA), SUPERHOOKTYPE_ABSOLUTEJMP);
+
+    // Read Hiwallz registry
+
+    // Create hook for each function in Hiwallz registry
+
+}
 
 int main()
 {
-	MessageBoxA(0, "YS - First Message", "YS - First Message", 0);
+    LoadLibraryA("user32.dll");
+
+    initlize_hooking();
+
+    printf("Hooked Process ID %d\n", GetCurrentProcessId());
 
 
-	x.init((UINT_PTR)GetProcAddress(GetModuleHandle(L"user32.dll"), "MessageBoxA"));
-	x.ret_hook((UINT_PTR)Hooked_MessageBoxA);
+    MessageBoxA(NULL, "hello", "hello", 0);
 
-	MessageBoxA(0, "YS - Second Message", "YS - Second Message", 0);
-
-	x.remove_hook();
-	MessageBoxA(0, "YS - Third Message", "YS - Third Message", 0);
-
-
-
-	return 0;
+    return 0;
 }
-
-
