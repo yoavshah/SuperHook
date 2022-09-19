@@ -33,10 +33,6 @@ void initlize_hooking()
 
     g_pSuperHook->HookFunction("user32.dll", "MessageBoxA", reinterpret_cast<UINT_PTR>(Hooked_MessageBoxA), SUPERHOOKTYPE_ABSOLUTEJMP);
 
-    // Read Hiwallz registry
-
-    // Create hook for each function in Hiwallz registry
-
 }
 
 int main()
