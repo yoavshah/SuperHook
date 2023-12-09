@@ -23,7 +23,6 @@
 
   * Do not try to hook VirtualProtect, it might crash the library.
   * Use with great care on projects, as the whole cloned dll have PAGE_EXECUTE_READWRITE protection.
-  * There is a problem with super_hook.remove_hook() using x64 architecture, you can use the hooked function again only if the function was used before the hooking happend and I don't know how to solve this issue.
 
 
   ## TODO

@@ -159,6 +159,7 @@ namespace SuperHookHooks
 		*uNumberOfBytesOverwritten = 7;
 #endif
 
+		
 		return bSucceed;
 	}
 }
@@ -284,6 +285,7 @@ bool SuperHookFunction::SetHook(SuperHookType hhtHookType)
 		break;
 	}
 
+	FlushInstructionCache((HANDLE)-1, NULL, 0);
 
 	this->m_IsHooked = bHookSucceed;
 	this->m_uNumberOfBytesChanged= uNumberOfBytesChanged;
