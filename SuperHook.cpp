@@ -285,7 +285,10 @@ bool SuperHookFunction::SetHook(SuperHookType hhtHookType)
 		break;
 	}
 
-	FlushInstructionCache((HANDLE)-1, NULL, 0);
+	if (bHookSucceed)
+	{
+		FlushInstructionCache((HANDLE)-1, NULL, 0);
+	}
 
 	this->m_IsHooked = bHookSucceed;
 	this->m_uNumberOfBytesChanged= uNumberOfBytesChanged;
