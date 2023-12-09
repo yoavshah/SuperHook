@@ -20,32 +20,55 @@ enum SuperHookType {
 
 };
 
-class SuperHook {
-
+class SuperHookModule
+{
 private:
-	bool m_bLoaded;
-
-	// ["function_name"] = <cloned_function_addr, real_function_addr, number_of_bytes_overwritten>  
-	std::map < std::string, std::tuple<UINT_PTR, UINT_PTR, unsigned int>> m_mFunctionsHookData;
-
-	// ["module_name"] = <cloned_module, real_module>  
-	std::map<std::string, std::tuple<UINT_PTR, UINT_PTR>> m_mClonedModules;
+	UINT_PTR m_pModule;
+	UINT_PTR m_pCloneModule;
+	unsigned int m_uCloneModuleSize;
 
 public:
-	SuperHook();
+	SuperHookModule(UINT_PTR pModuleBase);
 
-	~SuperHook();
+	~SuperHookModule();
 
-	bool HookFunction(std::string pszModuleName, std::string pszProcName, UINT_PTR pHookFunction, SuperHookType hhtHookType);
 
-	UINT_PTR ClonedFunction(std::string pszProcName);
+	UINT_PTR GetOriginalModule();
+	UINT_PTR GetClonedModule();
 
 private:
-
-	bool absolutejmp_hook(UINT_PTR pFunctionToHook, UINT_PTR pHookFunction, __out unsigned int* uNumberOfBytesOverwritten);
-
-	HMODULE ManualGetModuleByName(std::string pszModuleName);
-
-	UINT_PTR CloneModule(UINT_PTR pucRealModule);
+	bool CloneModule();
 
 };
+
+
+class SuperHookFunction
+{
+private:
+	SuperHookModule* m_pSuperHookModule;
+	UINT_PTR m_pHookedFunctionPointer;
+	UINT_PTR m_pClonedFunctionPointer;
+	UINT_PTR m_pMaliciousFunctionPointer;
+	
+
+	bool m_IsHooked;
+	unsigned int m_uNumberOfBytesChanged;
+
+
+public:
+	SuperHookFunction(SuperHookModule* pSuperHookModule, UINT_PTR pHookedFunctionPointer, UINT_PTR pMaliciousFunctionPointer);
+
+	~SuperHookFunction();
+
+	bool SetHook(SuperHookType hhtHookType);
+
+	bool UnHook();
+	
+	bool IsHooked();
+
+	UINT_PTR GetOriginalFunction();
+};
+
+
+
+

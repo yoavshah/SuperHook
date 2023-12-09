@@ -1,50 +1,44 @@
 #include <Windows.h>
 #include "SuperHook.h"
 
-SuperHook* g_pSuperHook;
+SuperHookModule* g_pSuperHookModule;
+SuperHookFunction* g_pSuperHookFunctionGetCurrentProcessId;
 
 DWORD __stdcall Hooked_GetCurrentProcessId()
 {
     // Do something
 
     // Call real function with parameters
-    DWORD dwProcessId = reinterpret_cast<decltype(GetCurrentProcessId)*>(g_pSuperHook->ClonedFunction("GetCurrentProcessId"))();
+    DWORD dwProcessId = reinterpret_cast<decltype(GetCurrentProcessId)*>(g_pSuperHookFunctionGetCurrentProcessId->GetOriginalFunction())();
 
     // Do something
-    return 0;
-}
 
-DWORD __stdcall Hooked_MessageBoxA(HWND hWnd, LPCSTR lpText, LPCSTR lpCaption, UINT uType)
-{
-    // Do something
+    // Return other value
 
-    // Call real function with parameters
-    DWORD dwResult = reinterpret_cast<decltype(MessageBoxA)*>(g_pSuperHook->ClonedFunction("MessageBoxA"))(hWnd, "MessageBox Hooked!", "MessageBox Hooked!", uType);
-
-    // Do something
-    return dwResult;
+    return dwProcessId + 0x1337;
 }
 
 void initlize_hooking()
 {
-    g_pSuperHook = new SuperHook();
+    HMODULE kernel32 = GetModuleHandle(L"kernel32.dll");
+    g_pSuperHookModule = new SuperHookModule(reinterpret_cast<UINT_PTR>(kernel32));
 
-    g_pSuperHook->HookFunction("kernel32.dll", "GetCurrentProcessId", reinterpret_cast<UINT_PTR>(Hooked_GetCurrentProcessId), SUPERHOOKTYPE_ABSOLUTEJMP);
+    g_pSuperHookFunctionGetCurrentProcessId = new SuperHookFunction(g_pSuperHookModule, reinterpret_cast<UINT_PTR>(GetProcAddress(kernel32, "GetCurrentProcessId")), reinterpret_cast<UINT_PTR>(Hooked_GetCurrentProcessId));
 
-    g_pSuperHook->HookFunction("user32.dll", "MessageBoxA", reinterpret_cast<UINT_PTR>(Hooked_MessageBoxA), SUPERHOOKTYPE_ABSOLUTEJMP);
-
+    g_pSuperHookFunctionGetCurrentProcessId->SetHook(SUPERHOOKTYPE_ABSOLUTEJMP);
 }
 
 int main()
 {
-    LoadLibraryA("user32.dll");
+    printf("Process ID %d\n", GetCurrentProcessId());
 
     initlize_hooking();
 
     printf("Hooked Process ID %d\n", GetCurrentProcessId());
 
+    g_pSuperHookFunctionGetCurrentProcessId->UnHook();
 
-    MessageBoxA(NULL, "hello", "hello", 0);
+    printf("Unhooked Process ID %d\n", GetCurrentProcessId());
 
     return 0;
 }

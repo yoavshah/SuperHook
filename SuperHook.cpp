@@ -8,240 +8,115 @@
 #pragma once
 #include "SuperHook.h"
 
-typedef BOOL(WINAPI* LPFN_ISWOW64PROCESS) (HANDLE, PBOOL);
-
-BOOL IsWow64()
+namespace SuperHookUtils
 {
-	BOOL bIsWow64 = FALSE;
-
-	//IsWow64Process is not available on all supported versions of Windows.
-	//Use GetModuleHandle to get a handle to the DLL that contains the function
-	//and GetProcAddress to get a pointer to the function if available.
-
-	LPFN_ISWOW64PROCESS fnIsWow64Process = (LPFN_ISWOW64PROCESS)GetProcAddress(
-		GetModuleHandle(TEXT("kernel32")), "IsWow64Process");
-
-	if (NULL != fnIsWow64Process)
+	typedef BOOL(WINAPI* LPFN_ISWOW64PROCESS) (HANDLE, PBOOL);
+	BOOL IsWow64()
 	{
-		if (!fnIsWow64Process(GetCurrentProcess(), &bIsWow64))
+		BOOL bIsWow64 = FALSE;
+
+		//IsWow64Process is not available on all supported versions of Windows.
+		//Use GetModuleHandle to get a handle to the DLL that contains the function
+		//and GetProcAddress to get a pointer to the function if available.
+
+		LPFN_ISWOW64PROCESS fnIsWow64Process = (LPFN_ISWOW64PROCESS)GetProcAddress(
+			GetModuleHandle(TEXT("kernel32")), "IsWow64Process");
+
+		if (NULL != fnIsWow64Process)
 		{
-			return FALSE;
-		}
-	}
-	return bIsWow64;
-}
-
-
-DWORD CalculateProtectionFlags(unsigned long ulSectionCharacteristics)
-{
-	DWORD dwProtectionFlags = 0;
-
-	if ((ulSectionCharacteristics & IMAGE_SCN_MEM_EXECUTE)
-		&& (ulSectionCharacteristics & IMAGE_SCN_MEM_WRITE)
-		&& (ulSectionCharacteristics & IMAGE_SCN_MEM_READ))
-	{
-		dwProtectionFlags |= PAGE_EXECUTE_READWRITE;
-	}
-
-	if ((ulSectionCharacteristics & IMAGE_SCN_MEM_EXECUTE)
-		&& (ulSectionCharacteristics & IMAGE_SCN_MEM_WRITE)
-		&& !(ulSectionCharacteristics & IMAGE_SCN_MEM_READ))
-	{
-		dwProtectionFlags |= PAGE_EXECUTE_WRITECOPY;
-	}
-
-	if ((ulSectionCharacteristics & IMAGE_SCN_MEM_EXECUTE)
-		&& !(ulSectionCharacteristics & IMAGE_SCN_MEM_WRITE)
-		&& (ulSectionCharacteristics & IMAGE_SCN_MEM_READ))
-	{
-		dwProtectionFlags |= PAGE_EXECUTE_READ;
-	}
-
-	if ((ulSectionCharacteristics & IMAGE_SCN_MEM_EXECUTE)
-		&& !(ulSectionCharacteristics & IMAGE_SCN_MEM_WRITE)
-		&& !(ulSectionCharacteristics & IMAGE_SCN_MEM_READ))
-	{
-		dwProtectionFlags |= PAGE_EXECUTE;
-	}
-
-	if (!(ulSectionCharacteristics & IMAGE_SCN_MEM_EXECUTE)
-		&& (ulSectionCharacteristics & IMAGE_SCN_MEM_WRITE)
-		&& (ulSectionCharacteristics & IMAGE_SCN_MEM_READ))
-	{
-		dwProtectionFlags |= PAGE_READWRITE;
-	}
-
-	if (!(ulSectionCharacteristics & IMAGE_SCN_MEM_EXECUTE)
-		&& (ulSectionCharacteristics & IMAGE_SCN_MEM_WRITE)
-		&& !(ulSectionCharacteristics & IMAGE_SCN_MEM_READ))
-	{
-		dwProtectionFlags |= PAGE_WRITECOPY;
-	}
-
-	if (!(ulSectionCharacteristics & IMAGE_SCN_MEM_EXECUTE)
-		&& !(ulSectionCharacteristics & IMAGE_SCN_MEM_WRITE)
-		&& (ulSectionCharacteristics & IMAGE_SCN_MEM_READ))
-	{
-		dwProtectionFlags |= PAGE_READONLY;
-	}
-
-	if (!(ulSectionCharacteristics & IMAGE_SCN_MEM_EXECUTE)
-		&& !(ulSectionCharacteristics & IMAGE_SCN_MEM_WRITE)
-		&& !(ulSectionCharacteristics & IMAGE_SCN_MEM_READ))
-	{
-		dwProtectionFlags |= PAGE_NOACCESS;
-	}
-
-
-	if (ulSectionCharacteristics & IMAGE_SCN_MEM_NOT_CACHED)
-	{
-		dwProtectionFlags |= PAGE_NOCACHE;
-	}
-
-	return dwProtectionFlags;
-
-}
-
-SuperHook::SuperHook() : m_bLoaded(false)
-{}
-
-SuperHook::~SuperHook()
-{
-}
-
-bool SuperHook::HookFunction(std::string pszModuleName, std::string pszProcName, UINT_PTR pHookFunction, SuperHookType hhtHookType)
-{
-
-	PIMAGE_NT_HEADERS pImageNtHeaders;
-	UINT_PTR pFunctionAddressToHook;
-
-	bool bHookSucceed;
-	unsigned int uNumberOfBytesOverwritten;
-
-	UINT_PTR pucRealModule;
-	UINT_PTR pucClonedModule;
-
-
-	auto it_functions = this->m_mFunctionsHookData.find(pszProcName);
-	if (it_functions != this->m_mFunctionsHookData.end())
-	{
-		// FOUND, no need to hook
-		return false;
-
-	}
-
-	auto it_modules = this->m_mClonedModules.find(pszModuleName);
-	if (it_modules != this->m_mClonedModules.end())
-	{
-		pucRealModule = std::get<1>(it_modules->second);
-		pucClonedModule = std::get<0>(it_modules->second);
-	}
-	else
-	{
-
-		pucRealModule = reinterpret_cast<UINT_PTR>(ManualGetModuleByName(pszModuleName));
-
-		pucClonedModule = CloneModule(pucRealModule);
-
-		// ["module_name"] = <cloned_module, real_module>  
-		std::tuple<UINT_PTR, UINT_PTR> tpModuleData(pucClonedModule, pucRealModule);
-		std::pair<std::string, std::tuple<UINT_PTR, UINT_PTR>> pModuleData(pszModuleName, tpModuleData);
-
-		m_mClonedModules.insert(pModuleData);
-	}
-
-	pImageNtHeaders = reinterpret_cast<PIMAGE_NT_HEADERS>(pucRealModule + reinterpret_cast<PIMAGE_DOS_HEADER>(pucRealModule)->e_lfanew);
-	pFunctionAddressToHook = NULL;
-
-	if (pImageNtHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress)
-	{
-		PIMAGE_EXPORT_DIRECTORY pImageExportDirectory;
-		PDWORD pNamePointers;
-		PWORD pOrdinalPointers;
-		PDWORD pAddressesPointers;
-
-		pImageExportDirectory = reinterpret_cast<PIMAGE_EXPORT_DIRECTORY>(pucRealModule + pImageNtHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress);
-
-		pNamePointers = reinterpret_cast<PDWORD>(pucRealModule + pImageExportDirectory->AddressOfNames);
-		pOrdinalPointers = reinterpret_cast<PWORD>(pucRealModule + pImageExportDirectory->AddressOfNameOrdinals);
-		pAddressesPointers = reinterpret_cast<PDWORD>(pucRealModule + pImageExportDirectory->AddressOfFunctions);
-
-		// Iterate over all exports and find the address of lpProcName
-		for (size_t i = 0; i < pImageExportDirectory->NumberOfNames; ++i, ++pNamePointers, ++pOrdinalPointers)
-		{
-			LPCSTR lpCurrFunctionName = reinterpret_cast<LPCSTR>(pucRealModule + *pNamePointers);
-			if (strcmp(pszProcName.c_str(), lpCurrFunctionName) == 0)
+			if (!fnIsWow64Process(GetCurrentProcess(), &bIsWow64))
 			{
-				DWORD dwFuncRVA = pAddressesPointers[*pOrdinalPointers];
-
-				pFunctionAddressToHook = pucRealModule + dwFuncRVA;
-				break;
-
+				return FALSE;
 			}
 		}
+		return bIsWow64;
+	}
 
-		if (pFunctionAddressToHook == NULL)
+	DWORD CalculateProtectionFlags(unsigned long ulSectionCharacteristics)
+	{
+		DWORD dwProtectionFlags = 0;
+
+		if ((ulSectionCharacteristics & IMAGE_SCN_MEM_EXECUTE)
+			&& (ulSectionCharacteristics & IMAGE_SCN_MEM_WRITE)
+			&& (ulSectionCharacteristics & IMAGE_SCN_MEM_READ))
+		{
+			dwProtectionFlags |= PAGE_EXECUTE_READWRITE;
+		}
+
+		if ((ulSectionCharacteristics & IMAGE_SCN_MEM_EXECUTE)
+			&& (ulSectionCharacteristics & IMAGE_SCN_MEM_WRITE)
+			&& !(ulSectionCharacteristics & IMAGE_SCN_MEM_READ))
+		{
+			dwProtectionFlags |= PAGE_EXECUTE_WRITECOPY;
+		}
+
+		if ((ulSectionCharacteristics & IMAGE_SCN_MEM_EXECUTE)
+			&& !(ulSectionCharacteristics & IMAGE_SCN_MEM_WRITE)
+			&& (ulSectionCharacteristics & IMAGE_SCN_MEM_READ))
+		{
+			dwProtectionFlags |= PAGE_EXECUTE_READ;
+		}
+
+		if ((ulSectionCharacteristics & IMAGE_SCN_MEM_EXECUTE)
+			&& !(ulSectionCharacteristics & IMAGE_SCN_MEM_WRITE)
+			&& !(ulSectionCharacteristics & IMAGE_SCN_MEM_READ))
+		{
+			dwProtectionFlags |= PAGE_EXECUTE;
+		}
+
+		if (!(ulSectionCharacteristics & IMAGE_SCN_MEM_EXECUTE)
+			&& (ulSectionCharacteristics & IMAGE_SCN_MEM_WRITE)
+			&& (ulSectionCharacteristics & IMAGE_SCN_MEM_READ))
+		{
+			dwProtectionFlags |= PAGE_READWRITE;
+		}
+
+		if (!(ulSectionCharacteristics & IMAGE_SCN_MEM_EXECUTE)
+			&& (ulSectionCharacteristics & IMAGE_SCN_MEM_WRITE)
+			&& !(ulSectionCharacteristics & IMAGE_SCN_MEM_READ))
+		{
+			dwProtectionFlags |= PAGE_WRITECOPY;
+		}
+
+		if (!(ulSectionCharacteristics & IMAGE_SCN_MEM_EXECUTE)
+			&& !(ulSectionCharacteristics & IMAGE_SCN_MEM_WRITE)
+			&& (ulSectionCharacteristics & IMAGE_SCN_MEM_READ))
+		{
+			dwProtectionFlags |= PAGE_READONLY;
+		}
+
+		if (!(ulSectionCharacteristics & IMAGE_SCN_MEM_EXECUTE)
+			&& !(ulSectionCharacteristics & IMAGE_SCN_MEM_WRITE)
+			&& !(ulSectionCharacteristics & IMAGE_SCN_MEM_READ))
+		{
+			dwProtectionFlags |= PAGE_NOACCESS;
+		}
+
+
+		if (ulSectionCharacteristics & IMAGE_SCN_MEM_NOT_CACHED)
+		{
+			dwProtectionFlags |= PAGE_NOCACHE;
+		}
+
+		return dwProtectionFlags;
+
+	}
+
+}
+
+namespace SuperHookHooks
+{
+	bool absolutejmp_hook(UINT_PTR pFunctionToHook, UINT_PTR pMaliciousFunction, unsigned int* uNumberOfBytesOverwritten)
+	{
+		bool bSucceed = true;
+		if (uNumberOfBytesOverwritten == NULL)
 		{
 			return false;
 		}
 
-		bHookSucceed = false;
-		uNumberOfBytesOverwritten = 0;
-		switch (hhtHookType)
-		{
-		case SUPERHOOKTYPE_ABSOLUTEJMP:
-			bHookSucceed = absolutejmp_hook(pFunctionAddressToHook, pHookFunction, &uNumberOfBytesOverwritten);
-			break;
-
-		case SUPERHOOKTYPE_RET:
-			break;
-
-		default:
-			break;
-
-		}
-
-		// If hook succeed add hook data to m_mFunctionsHookData
-		if (bHookSucceed)
-		{
-			UINT_PTR pClonedFunctionAddress = (pFunctionAddressToHook - pucRealModule) + pucClonedModule;
-
-			// ["function_name"] = <cloned_function_addr, real_function_addr, number_of_bytes_overwritten>  
-			std::tuple<UINT_PTR, UINT_PTR, unsigned int> tpFunctionData(pClonedFunctionAddress, pFunctionAddressToHook, uNumberOfBytesOverwritten);
-			std::pair<std::string, std::tuple<UINT_PTR, UINT_PTR, unsigned int>> prFunctionData(pszProcName, tpFunctionData);
-
-			m_mFunctionsHookData.insert(prFunctionData);
-		}
-
-	}
+		*uNumberOfBytesOverwritten = 0;
 
 
-}
-
-UINT_PTR SuperHook::ClonedFunction(std::string pszProcName)
-{
-
-	auto it = this->m_mFunctionsHookData.find(pszProcName);
-	if (it != this->m_mFunctionsHookData.end())
-	{
-		return std::get<0>(it->second);
-	}
-
-	return 0;
-}
-
-bool SuperHook::absolutejmp_hook(UINT_PTR pFunctionToHook, UINT_PTR pHookFunction, __out unsigned int* uNumberOfBytesOverwritten)
-{
-	bool bSucceed = true;
-	if (uNumberOfBytesOverwritten == NULL)
-	{
-		return false;
-	}
-
-	*uNumberOfBytesOverwritten = 0;
-
-	try
-	{
 #ifdef _WIN64
 		DWORD dwOldProtect;
 		VirtualProtect((LPVOID)pFunctionToHook, 12, PAGE_EXECUTE_READWRITE, &dwOldProtect);
@@ -252,7 +127,7 @@ bool SuperHook::absolutejmp_hook(UINT_PTR pFunctionToHook, UINT_PTR pHookFunctio
 		*(char*)(pFunctionToHook + 11) = '\xE0';
 
 		// movabs rax, pMalicousFunction
-		*(ULONG_PTR*)(pFunctionToHook + 2) = pHookFunction;
+		*(ULONG_PTR*)(pFunctionToHook + 2) = pMaliciousFunction;
 		*(char*)(pFunctionToHook + 1) = '\xB8';
 		InterlockedExchange8((char*)pFunctionToHook, '\x48');
 
@@ -261,6 +136,7 @@ bool SuperHook::absolutejmp_hook(UINT_PTR pFunctionToHook, UINT_PTR pHookFunctio
 		// jmp rax
 
 		VirtualProtect((LPVOID)pFunctionToHook, 12, dwOldProtect, &dwOldProtect);
+		*uNumberOfBytesOverwritten = 12;
 
 #elif _WIN32
 		DWORD dwOldProtect;
@@ -272,7 +148,7 @@ bool SuperHook::absolutejmp_hook(UINT_PTR pFunctionToHook, UINT_PTR pHookFunctio
 		*(char*)(pFunctionToHook + 6) = '\xE0';
 
 		// mov eax, pMalicousFunction
-		*(ULONG_PTR*)(pFunctionToHook + 1) = pHookFunction;
+		*(ULONG_PTR*)(pFunctionToHook + 1) = pMaliciousFunction;
 		InterlockedExchange8((char*)pFunctionToHook, '\xB8');
 
 		// We now changed the function to run
@@ -280,92 +156,172 @@ bool SuperHook::absolutejmp_hook(UINT_PTR pFunctionToHook, UINT_PTR pHookFunctio
 		// jmp eax
 
 		VirtualProtect((LPVOID)pFunctionToHook, 7, dwOldProtect, &dwOldProtect);
-
+		*uNumberOfBytesOverwritten = 7;
 #endif
+
+		return bSucceed;
 	}
-	catch (const std::exception&)
+}
+
+
+SuperHookModule::SuperHookModule(UINT_PTR pModule) : m_pModule(pModule), m_pCloneModule(NULL), m_uCloneModuleSize(0)
+{
+	this->CloneModule();
+}
+
+SuperHookModule::~SuperHookModule()
+{
+	if (this->m_pCloneModule)
 	{
-		bSucceed = false;
+		VirtualFree(reinterpret_cast<LPVOID>(this->m_pCloneModule), 0, MEM_RELEASE);
 	}
-
-	return bSucceed;
 }
 
-HMODULE SuperHook::ManualGetModuleByName(std::string pszModuleName)
+bool SuperHookModule::CloneModule()
 {
-	return GetModuleHandleA(pszModuleName.c_str());
-}
-
-UINT_PTR SuperHook::CloneModule(UINT_PTR pucRealModule)
-{
-	DWORD dwSizeOfImage;
 	DWORD dwOldProtect;
 
-	UINT_PTR pucClonedModule;
-
 	SYSTEM_INFO sysInfo;
-	
+	this->m_pCloneModule = NULL;
 
-	pucClonedModule = NULL;
-	try
+	this->m_uCloneModuleSize = reinterpret_cast<PIMAGE_NT_HEADERS>(this->m_pModule + reinterpret_cast<PIMAGE_DOS_HEADER>(this->m_pModule)->e_lfanew)->OptionalHeader.SizeOfImage;
+		
+	this->m_pCloneModule = reinterpret_cast<UINT_PTR>(VirtualAlloc(NULL, this->m_uCloneModuleSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+	if (!this->m_pCloneModule)
 	{
-		dwSizeOfImage = reinterpret_cast<PIMAGE_NT_HEADERS>(pucRealModule + reinterpret_cast<PIMAGE_DOS_HEADER>(pucRealModule)->e_lfanew)->OptionalHeader.SizeOfImage;
+		return false;
+	}
 
-		pucClonedModule = reinterpret_cast<UINT_PTR>(new unsigned char[dwSizeOfImage] {});
+	for (size_t i = 0; i < this->m_uCloneModuleSize; i++)
+	{
+		reinterpret_cast<unsigned char*>(this->m_pCloneModule)[i] = 0x00;
+	}
 
-		if (!IsWow64())
+	if (!SuperHookUtils::IsWow64())
+	{
+		for (size_t i = 0; i < this->m_uCloneModuleSize; i++)
 		{
-			for (size_t i = 0; i < dwSizeOfImage; i++)
-			{
-				reinterpret_cast<unsigned char*>(pucClonedModule)[i] = reinterpret_cast<unsigned char*>(pucRealModule)[i];
-			}
+			reinterpret_cast<unsigned char*>(this->m_pCloneModule)[i] = reinterpret_cast<unsigned char*>(this->m_pModule)[i];
 		}
-		else
+	}
+	else
+	{
+		// Look at kernel32.dll under wow64, fking stupid fuck on microsoft
+		GetSystemInfo(&sysInfo);
+		for (size_t i = 0; i < this->m_uCloneModuleSize; i += sysInfo.dwPageSize)
 		{
-			// Look at kernel32.dll under wow64, fking stupid fuck on microsoft
-			GetSystemInfo(&sysInfo);
-			for (size_t i = 0; i < dwSizeOfImage; i += sysInfo.dwPageSize)
+			MEMORY_BASIC_INFORMATION mbi;
+
+			VirtualQuery(reinterpret_cast<unsigned char*>(this->m_pModule) + i, &mbi, sizeof(mbi));
+
+			if (mbi.Protect == PAGE_READONLY || mbi.Protect == PAGE_READWRITE || mbi.Protect == PAGE_EXECUTE_READ || mbi.Protect == PAGE_EXECUTE_READWRITE)
 			{
-				MEMORY_BASIC_INFORMATION mbi;
-
-				VirtualQuery(reinterpret_cast<unsigned char*>(pucRealModule) + i, &mbi, sizeof(mbi));
-
-				if (mbi.Protect == PAGE_READONLY || mbi.Protect == PAGE_READWRITE || mbi.Protect == PAGE_EXECUTE_READ || mbi.Protect == PAGE_EXECUTE_READWRITE)
+				for (size_t j = 0; j < sysInfo.dwPageSize; j++)
 				{
-					for (size_t j = 0; j < sysInfo.dwPageSize; j++)
-					{
-						reinterpret_cast<unsigned char*>(pucClonedModule)[i + j] = reinterpret_cast<unsigned char*>(pucRealModule)[i + j];
-					}
+					reinterpret_cast<unsigned char*>(this->m_pCloneModule)[i + j] = reinterpret_cast<unsigned char*>(this->m_pModule)[i + j];
 				}
 			}
-
 		}
-		
-
-		UINT_PTR pucCurrentSection;
-		unsigned int uNumberOfSections;
-		VirtualProtect(reinterpret_cast<LPVOID>(pucClonedModule), dwSizeOfImage, PAGE_READONLY, &dwOldProtect);
-
-		uNumberOfSections = reinterpret_cast<PIMAGE_NT_HEADERS>(pucRealModule + reinterpret_cast<PIMAGE_DOS_HEADER>(pucRealModule)->e_lfanew)->FileHeader.NumberOfSections;
-		pucCurrentSection = reinterpret_cast<UINT_PTR>(IMAGE_FIRST_SECTION(reinterpret_cast<PIMAGE_NT_HEADERS>(pucRealModule + reinterpret_cast<PIMAGE_DOS_HEADER>(pucRealModule)->e_lfanew)));
-		for (size_t i = 0; i < uNumberOfSections; i++)
-		{
-			DWORD dwProtectionFlag = 0;
-
-			dwProtectionFlag = CalculateProtectionFlags(reinterpret_cast<PIMAGE_SECTION_HEADER>(pucCurrentSection)->Characteristics);
-
-			VirtualProtect(reinterpret_cast<LPVOID>(pucClonedModule + reinterpret_cast<PIMAGE_SECTION_HEADER>(pucCurrentSection)->VirtualAddress), reinterpret_cast<PIMAGE_SECTION_HEADER>(pucCurrentSection)->Misc.VirtualSize, dwProtectionFlag, &dwOldProtect);
-
-		}
-
-		VirtualProtect(reinterpret_cast<LPVOID>(pucClonedModule), dwSizeOfImage, PAGE_EXECUTE_READWRITE, &dwOldProtect);
 
 	}
-	catch (const std::exception&)
+
+
+	UINT_PTR pucCurrentSection;
+	unsigned int uNumberOfSections;
+	VirtualProtect(reinterpret_cast<LPVOID>(this->m_pCloneModule), this->m_uCloneModuleSize, PAGE_READONLY, &dwOldProtect);
+
+	uNumberOfSections = reinterpret_cast<PIMAGE_NT_HEADERS>(this->m_pModule + reinterpret_cast<PIMAGE_DOS_HEADER>(this->m_pModule)->e_lfanew)->FileHeader.NumberOfSections;
+	pucCurrentSection = reinterpret_cast<UINT_PTR>(IMAGE_FIRST_SECTION(reinterpret_cast<PIMAGE_NT_HEADERS>(this->m_pModule + reinterpret_cast<PIMAGE_DOS_HEADER>(this->m_pModule)->e_lfanew)));
+	for (size_t i = 0; i < uNumberOfSections; i++)
 	{
+		DWORD dwProtectionFlag = 0;
+
+		dwProtectionFlag = SuperHookUtils::CalculateProtectionFlags(reinterpret_cast<PIMAGE_SECTION_HEADER>(pucCurrentSection)->Characteristics);
+
+		VirtualProtect(reinterpret_cast<LPVOID>(this->m_pCloneModule + reinterpret_cast<PIMAGE_SECTION_HEADER>(pucCurrentSection)->VirtualAddress), reinterpret_cast<PIMAGE_SECTION_HEADER>(pucCurrentSection)->Misc.VirtualSize, dwProtectionFlag, &dwOldProtect);
 
 	}
 
-	return pucClonedModule;
+	VirtualProtect(reinterpret_cast<LPVOID>(this->m_pCloneModule), this->m_uCloneModuleSize, PAGE_EXECUTE_READWRITE, &dwOldProtect);
+
+
+	return true;
+
+}
+
+UINT_PTR SuperHookModule::GetOriginalModule() { return this->m_pModule; }
+UINT_PTR SuperHookModule::GetClonedModule() { return this->m_pCloneModule; }
+
+
+SuperHookFunction::SuperHookFunction(SuperHookModule* pSuperHookModule, UINT_PTR pHookedFunctionPointer, UINT_PTR pMaliciousFunctionPointer) : m_pSuperHookModule(pSuperHookModule), m_pHookedFunctionPointer(pHookedFunctionPointer), m_pMaliciousFunctionPointer(pMaliciousFunctionPointer), m_pClonedFunctionPointer(NULL), m_IsHooked(false), m_uNumberOfBytesChanged(0)
+{
+	this->m_pClonedFunctionPointer = pHookedFunctionPointer - pSuperHookModule->GetOriginalModule() + pSuperHookModule->GetClonedModule();
+} 
+
+SuperHookFunction::~SuperHookFunction()
+{
+	
+}
+
+bool SuperHookFunction::SetHook(SuperHookType hhtHookType)
+{
+	bool bHookSucceed = false;
+	unsigned int uNumberOfBytesChanged = 0;
+
+	if (this->m_IsHooked)
+		return false;
+		
+	switch (hhtHookType)
+	{
+	case SUPERHOOKTYPE_ABSOLUTEJMP:
+		bHookSucceed = SuperHookHooks::absolutejmp_hook(this->m_pHookedFunctionPointer, m_pMaliciousFunctionPointer, &uNumberOfBytesChanged);
+		break;
+
+	case SUPERHOOKTYPE_RET:
+		break;
+
+	default:
+		break;
+	}
+
+
+	this->m_IsHooked = bHookSucceed;
+	this->m_uNumberOfBytesChanged= uNumberOfBytesChanged;
+}
+
+bool SuperHookFunction::UnHook()
+{
+	if (!this->m_IsHooked)
+		return false;
+
+
+	DWORD dwOldProtect;
+	VirtualProtect(reinterpret_cast<LPVOID>(this->m_pHookedFunctionPointer), this->m_uNumberOfBytesChanged, PAGE_EXECUTE_READWRITE, &dwOldProtect);
+	InterlockedExchange8((char*)this->m_pHookedFunctionPointer, '\xC3');
+
+
+	for (size_t i = 1; i < this->m_uNumberOfBytesChanged; i++)
+	{
+		reinterpret_cast<unsigned char*>(this->m_pHookedFunctionPointer)[i] = reinterpret_cast<unsigned char*>(this->m_pClonedFunctionPointer)[i];
+	}
+
+	InterlockedExchange8(reinterpret_cast<char*>(this->m_pHookedFunctionPointer), reinterpret_cast<unsigned char*>(this->m_pClonedFunctionPointer)[0]);
+
+	VirtualProtect(reinterpret_cast<LPVOID>(this->m_pHookedFunctionPointer), this->m_uNumberOfBytesChanged, dwOldProtect, &dwOldProtect);
+
+	this->m_IsHooked = false;
+	return true;
+}
+
+
+bool SuperHookFunction::IsHooked()
+{
+	return this->m_IsHooked;
+}
+
+
+UINT_PTR SuperHookFunction::GetOriginalFunction()
+{
+	return this->m_pClonedFunctionPointer;
 }
 
