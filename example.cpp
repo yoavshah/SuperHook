@@ -1,6 +1,8 @@
 #include <Windows.h>
 #include "SuperHook.h"
 
+#include <stdio.h>
+
 SuperHookModule* g_pSuperHookModule;
 SuperHookFunction* g_pSuperHookFunctionGetCurrentProcessId;
 
